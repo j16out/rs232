@@ -1,0 +1,110 @@
+
+/**************************************************
+
+file: demo_rx.c
+purpose: simple demo that receives characters from
+the serial port and print them on the screen,
+exit the program by pressing Ctrl-C
+
+compile with the command: gcc simple_serial_read.c rs232.c -Wall -Wextra -o2 -o read
+
+**************************************************/
+#include <iostream>
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "rs232.h"
+#include <string>
+#include <fstream>
+#include <vector>
+#include <algorithm>
+#include <sstream>
+#include "ctime"
+using namespace std;
+
+template <typename T> string tostr(const T& t) { 
+   ostringstream os; 
+   os<<t; 
+   return os.str();
+}
+
+
+
+int main()
+{
+  int i, n, cport_nr=1, bdrate=9600;        /* /dev/ttyS0 (COM1 on windows) */
+            /* 9600 baud */
+      int seconds = 5;
+
+  unsigned char buf[4096];
+  string buftemp = "B";
+  
+  const char* c; 
+  
+  bool run = false;
+
+
+char mode[]={'8','N','1',0},
+       str[2][512];
+
+
+  strcpy(str[0], "r");
+
+
+  if(RS232_OpenComport(cport_nr, bdrate, mode))
+  {
+    printf("Can not open comport\n");
+
+    return(0);
+  }
+
+
+	while(1)
+	{
+	  string bufstring = "START  ";
+	   clock_t endwait;
+	   
+	   endwait = clock () + seconds * CLOCKS_PER_SEC ;
+	   run = false;
+	  
+		   while (clock() < endwait)
+		   {
+		   //RS232_cputs(cport_nr, str[0]);
+		    //printf("sent: %s\n", str[0]);
+		    n = RS232_PollComport(cport_nr, buf, 4095);
+
+			    if(n > 0)
+			    {
+			      buf[n] = 0;   /* always put a "null" at the end of a string! */
+
+			      for(i=0; i < n; i++)
+			      {
+				if(buf[i] < 32)  /* replace unreadable control-codes by dots */
+				{
+				  buf[i] = '.';
+				  //cout << "\n";
+				}
+			      }
+
+			   //cout << buf << "\n";
+			   string sName(reinterpret_cast<char*>(buf));
+					   if((sName.find("r") == 0 && run == false) || (run && bufstring.length() < 60))
+					    {
+					    bufstring.append(sName);
+					    run = true;
+					    }
+					    
+					    
+			    }
+
+		    }
+	   
+
+	    cout << "\n" << bufstring;
+
+	  }
+	 
+ 
+  return(0);
+}
+

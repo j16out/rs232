@@ -1,0 +1,223 @@
+
+/**************************************************
+***FOR GENERATION 2 boards ONLY!!!!!!
+
+
+purpose: simple program that receives RFID serial data from
+usb port and post them to server,
+exit the program by pressing Ctrl-C
+
+compile code with the command below (in terminal) **note you will need to include the rs232.C and rs232.h file in the same directory in order to create execuetable: 
+
+g++ Gen2rxserialpost.C rs232.c -Wall -Wextra -o2 -o Gen2serpost
+
+
+
+***to make executable run on boot add line below to the rc.local file located in /etc (will need root privilages to edit)
+
+sudo ./home/pi/directory_your_executable_is_in/your_executable &
+
+for example Gen2serpost (executable) is located in the /home/pi/demo (directory) therefore the line would be:
+
+sudo ./home/pi/demo/Gen2serpost &
+
+**************************************************/
+#include <iostream>
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "rs232.h"
+#include <string>
+#include <fstream>
+#include <vector>
+#include <algorithm>
+#include <sstream>
+#include "ctime"
+#include <sys/socket.h> // Needed for the socket functions
+#include <netdb.h>      // Needed for the socket functions
+#include <unistd.h>  
+#include <istream>
+#include <cstring>
+#include <alloca.h>
+
+using namespace std;
+
+
+
+
+ //this is a struct used to convert variables to string, may be useful when dealing with feeder id's
+template <typename T> string tostr(const T& t) { 
+   ostringstream os; 
+   os<<t; 
+   return os.str();
+}
+
+//declare function to format string and post it
+void sendstringtcp(char *msg);
+
+
+
+
+
+
+
+int main()
+{
+  int i, n, cport_nr = 0, bdrate=38400;        /* /dev/ttyS0 list of cport_nr order found in rs232.C */
+  int seconds = 2;                           //time of loop, pulses RFID unit every n seconds
+  unsigned char buf[4096];                   //buffer array for incoming data
+  int firstcount = 0;//when reader first starts the first string shouldn't be read
+  const char* c1;  //
+  
+  bool run = false;
+
+
+char mode[]={'8','N','1',0},
+       str[2][512];
+
+
+  strcpy(str[0], "r");  // the string sent to the unit every loop
+
+
+  if(RS232_OpenComport(cport_nr, bdrate, mode))
+  {
+    printf("Can not open comport\n");
+
+    return(0);
+  }
+
+
+	while(1)
+	{     RS232_cputs(cport_nr, str[0]); //open port and send string to unit ie tell it to read
+              printf("sent: %s", str[0]); //print the result
+              
+	  string bufstring = "START__"; //reset bufstring for new run
+	  
+	  
+	   clock_t endwait; //setup clock/timer, this will run the while loop for n seconds previously set
+	   endwait = clock () + seconds * CLOCKS_PER_SEC ;
+	   run = false;
+	  
+		   while (clock() < endwait)
+		   {
+		   
+		    n = RS232_PollComport(cport_nr, buf, 4095); //read incoming data from reader
+
+			    if(n > 0)
+			    {
+			      buf[n] = 0;   // always put a "null" at the end of a string! 
+
+			      for(i=0; i < n; i++)
+			      {
+				if(buf[i] < 32)  // replace unreadable stuff by dots 
+				{
+				  buf[i] = '.';
+				  //cout << "\n";
+				}
+			      }
+
+			   //cout << buf << "\n";
+			   string sName(reinterpret_cast<char*>(buf));  //take contents of buffer and store them 
+					   if((run == false) || (run && bufstring.length() < 500)) //check size of incoming data
+					    {
+					    bufstring.append(sName); //append contents of buffer
+					    run = true;
+					    }
+					    
+					    
+			    }
+
+		    }
+	   
+
+	    cout << "\n" << bufstring << "\n";
+            
+		     c1 = bufstring.c_str(); //convert string to char
+		     char *conbuf = (char *)c1;
+		   
+		     sendstringtcp(conbuf);//start function format string and send data to server
+		     
+	  }
+	 
+ 
+  return(0);
+}
+
+void sendstringtcp(char *msg) //this function finds the key data from string read from RFID loggers
+{
+
+
+/*typical string from Gen2 RFID logger:
+
+START  004D9AF417......GENERAL PURPOSE RFID READER (V2.1)..Reader ID: GPR..Date & time: 03/07/00 21:47:12.Battery level: 12.7V Battery threshold: 8V.LED heartbeat: ON .Poll time: 500  Cycle time: 2000 .Delay time: 10.OFF1--->ON1     OFF2--->ON2     OFF3--->ON3     .99:99     99:99     99:99     99:99     99:99     99:99     ..SD card missing or write-protected...Your wish is my command:.s = settings.l = log data.m = memory access.r = read tag.sent: r
+
+*/
+const char * c; //some temp variables
+const char * b;
+const char * a;
+
+bool postdata = true;
+string data = "curl --data \""; // string that will be eventually become curl command
+string picfile = "streamer -f jpeg -o pics/"; // string that will become streamer (webcam capture) command
+
+//format string and find time	
+data.append("time=");		
+string current = msg;
+string hardcopy;
+
+
+hardcopy = current;
+if(hardcopy.length() > 400 && firstcount > 0)
+	{
+	current.erase (current.begin(), current.begin() + 89);
+	current.erase (current.begin()+16, current.end());
+	b = current.c_str();
+
+	data.append(b);
+	picfile.append(b);
+
+
+
+	//find tag
+	data.append("&rfid=");
+	current = hardcopy;
+	current.erase (current.begin(), current.begin() + 7);
+	current.erase (current.begin()+10, current.end());
+		if(current.find("FFFFFFFFFF") == 0)//check if tag was detected; if no, stops from posting data
+			{
+			postdata = false;
+			}
+
+	b = current.c_str();
+	data.append(b);
+        picfile.append(b);
+
+        //append feeder id (when we implement it)
+	data.append("&feederid=");
+	data.append(tostr(21));//converts int or float to string
+	
+	
+	//now append the final parts to complete the system commands
+	data.append("\" --url \"http://gaia.tru.ca/birdMOVES/postData.RA\" -v");  
+	picfile.append(".jpeg -c /dev/video0");
+	
+	//convert them back to chars
+	c = data.c_str();
+	a = picfile.c_str();
+	
+	//now post data if tag has tag has been found via system command
+	if(postdata)
+	{
+	cout <<  "\n" << c << "\n";
+	system(a);
+	system(c);
+	 
+	}
+	
+    }    
+       
+   ++firstcount;     
+        
+        
+ }
+
